@@ -14,6 +14,7 @@ export default class GameScene extends Phaser.Scene {
         this.maxLives = 5;
         this.hudIcons = [];
         this.gameOverShown = false;
+        this.enemyCountText = null;
     }
 
     preload() {
@@ -42,9 +43,14 @@ export default class GameScene extends Phaser.Scene {
         // HUD
         this.createHUD(this.lives);
 
+        // enemy counter text for debugging
+        this.enemyCountText = this.add.text(12, 48, 'Enemies: 0', { font: '16px Arial', fill: '#ffffff' }).setDepth(5).setScrollFactor(0);
+
         // input
         this.cursors = this.input.keyboard.createCursorKeys();
         this.input.on('pointermove', (pointer) => { this.pointerX = pointer.x; });
+
+            // (no debug logs)
 
         // collisions
         this.physics.add.overlap(this.player, this.enemies, this.playerHitByEnemy, null, this);
@@ -81,12 +87,25 @@ export default class GameScene extends Phaser.Scene {
     spawnEntity() {
         const x = Phaser.Math.Between(48, this.width - 48);
         // always spawn an enemy (obstacle) that falls down
-        const sprite = this.physics.add.sprite(x, -80, 'enemy');
-        sprite.setVelocityY(Phaser.Math.Between(120, 220));
+        // debug log so developer can see spawning in console
+        const sprite = this.add.sprite(x, -80, 'enemy');
+        // increase obstacle vertical speed (pixels/sec) to make them fall faster
+        const vy = Phaser.Math.Between(240, 420);
+        // store manual vertical speed (pixels per second)
+        sprite.setData('vy', vy);
         sprite.setData('type', 'enemy');
-        sprite.setCollideWorldBounds(false);
-        sprite.body.checkCollision.up = false;
+        // if a physics body exists, disable it to avoid conflicting movement
+        if (sprite.body) {
+            try { sprite.body.enable = false; } catch (e) { /* ignore */ }
+        }
+        // ensure enemy renders above the tiled background
+        sprite.setDepth(2);
+        // small scale tweak in case asset is too large
+        sprite.setScale(1);
+        sprite.setActive(true);
+        sprite.setVisible(true);
         this.enemies.add(sprite);
+            // (no debug visuals)
     }
 
     playerHitByEnemy(player, enemy) {
@@ -117,13 +136,15 @@ export default class GameScene extends Phaser.Scene {
         this.hudIcons.forEach(i => i.destroy());
         this.hudIcons = [];
         if (this.spawnTimerEvent) this.spawnTimerEvent.remove(false);
-        this.time.delayedCall(4000, () => this.showGameOver());
+        // show GameOver sooner (1 second) for better responsiveness
+        this.time.delayedCall(1000, () => this.showGameOver());
     }
 
     showGameOver() {
         this.gameOverShown = true;
         this.add.text(this.width / 2, this.height / 2, 'GameOver', { font: '48px Arial', fill: '#ff6666' }).setOrigin(0.5);
-        this.time.delayedCall(5000, () => this.scene.start('MenuScene'));
+        // return to menu after 3 seconds
+        this.time.delayedCall(3000, () => this.scene.start('MenuScene'));
     }
 
     update(time, delta) {
@@ -154,7 +175,29 @@ export default class GameScene extends Phaser.Scene {
         }, this);
 
         this.enemies.children.each((child) => {
-            if (child && child.y > this.height + 80) child.destroy();
+            if (!child) return;
+            // manual movement using stored vy
+            const vy = child.getData && child.getData('vy');
+            if (vy) child.y += vy * (delta / 1000);
+            // force visible and depth in case something hides them
+            child.setVisible(true);
+            child.setActive(true);
+            child.setDepth(2);
+            const dr = child.getData && child.getData('debugRect');
+            if (dr) dr.setPosition(child.x, child.y);
+            const dt = child.getData && child.getData('debugText');
+            if (dt) dt.setPosition(child.x, child.y - 6);
+
+            // collision check with player using bounding boxes
+            if (this.player && Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), child.getBounds())) {
+                // call the collision handler
+                this.playerHitByEnemy(this.player, child);
+            }
+
+            if (child.y > this.height + 80) child.destroy();
         }, this);
+
+        // update debug counter
+        if (this.enemyCountText) this.enemyCountText.setText('Enemies: ' + this.enemies.countActive(true));
     }
 }
